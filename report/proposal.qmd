@@ -1,0 +1,121 @@
+---
+title: "The macroecology of rodent synanthropy"
+author: 
+  - David Simons
+  - Colin Carlson
+  - Daniel Becker
+  - Barbara Han
+  - Rory Gibb
+  - Steph Seifert
+date: today
+code-fold: true
+---
+
+```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("ggtree")
+BiocManager::install("treeio")
+
+library(DT)
+library(here)
+library(ggtree)
+library(readxl)
+library(treeio)
+library(tidyverse)
+library(tidytree)
+
+```
+
+# Motivation
+
+Produce a nice raster for a model on plague.
+
+# Methods
+
+1.  *Identify a problem*. Based on known synanthropic rodent species' are we able to predict synanthropy as a trait for all rodents?
+2.  *Develop or obtain outcome data*. Synanthropy is the outcome, previously compiled for rodents in this paper by [Ecke et al.](https://www.nature.com/articles/s41467-022-35273-7). See table below for synanthropy status for species (unsure what TS means).
+3.  *Develop or obtain predictor data*. To be confirmed based on a review of current literature but likely to include;
+    1. Morphological traits (i.e., body size, tail length)
+    2. Ecological traits (i.e., diet composition, habitat preference, nesting habits)
+    3. Behavioural traits (i.e., activity patterns, social structure, aggressiveness)
+    4. Life history traits (i.e., reproductive rate, longevity)
+    5. Physiological traits (i.e., thermoregulation, disease resistance)
+    6. Human associated traits (i.e., anthropogenic food availability, tolerance)
+    7. Biome/range size
+    8. Human population density within rodent range (predictor or effect?)
+    9. Genetic relatedness to established synanthropic species/diversity within population (?increased adaptability)
+    10. Climate  
+
+![Predicting synanthropy for a rodent species](diagram.svg)
+
+4.  *Data harmonisation*
+5.  *Feature selection*
+6.  *BRT*
+7.  *Interpreting predictions*. Binary classification synanthropic (1) or non-synanthropic (0) for each rodent species.
+8.  *Validation*
+9.  *Sensitivity*
+10. *Visualisation*
+11. *Transparency and reporting*
+12. *Model updating*
+13. *Model retirement*
+
+## Data
+
+### Rodent species 
+
+```{r all_rodents, message = FALSE, warning = FALSE}
+
+rodentia <- read_csv(here("data", "mammal_diversity", "MDD_v1.12.1.csv")) %>%
+  filter(order == "RODENTIA")
+synanthropy <- read_xlsx(here("data", "rodent_synanthropy", "ecke_2022.xlsx")) %>%
+  select(Rodents, Synanthropic)
+cyclicity <- read_xlsx(here("data", "rodent_synanthropy", "ecke_2022.xlsx")) %>%
+  select(Rodents, Synanthropic, Urban_areas, Cyclicity) %>%
+  drop_na(Cyclicity) %>%
+  distinct(Rodents, Synanthropic, Urban_areas, Cyclicity)
+```
+
+There are `r nrow(rodentia)` rodent species recorded in the [ASM Mammal Diversity Database v1.12.1](https://www.mammaldiversity.org/). 
+
+### Known synanthropy
+
+```{r synanthropy, message = FALSE, warning = FALSE}
+
+synanthropy_df <- rodentia %>%
+  select(sciName, genus, family, order) %>%
+  left_join(synanthropy, by = c("sciName" = "Rodents")) %>%
+  distinct()
+
+synanthropy_df %>%
+  mutate(sciName = str_replace(sciName, "_", " "),
+         family = str_to_sentence(family),
+         order = str_to_sentence(order)) %>%
+  rename("Scientific name" = sciName) %>%
+  datatable(colnames = str_to_sentence(names(.)))
+
+```
+
+From these we have information on synanthropy from `r nrow(synanthropy_df %>% filter(!is.na(Synanthropic)))` (`r round(nrow(synanthropy_df %>% filter(!is.na(Synanthropic)))/nrow(rodentia), 2) * 100`%) species. Of which `r nrow(synanthropy_df %>% filter(Synanthropic == "O"))` are classed as synanthropic and `r nrow(synanthropy_df %>% filter(Synanthropic == "N"))` as non-synanthropic. A small subset (6 species), are classed as "TS".
+
+### Rodent phylogeny
+
+Synanthropic and nonsynanthropic species that share a recent common ancestor may exhibit higher genetic similarity compared to more distantly related species. In the context of synanthropy, divergent evolution may result in genetic differences between synanthropic and nonsynanthropic species due to adaptation to urban or anthropogenic environments versus natural habitats. Convergent evolution may lead to genetic similarities between synanthropic species from different evolutionary lineages that have independently adapted to human-altered environments. Genes that confer fitness advantages in anthropogenic settings are likely to be under positive selection in synanthropic species. Traits associated with increased fitness in anthropogenic environments, such as tolerance to urbanization, ability to exploit human resources, or resistance to anthropogenic stressors (e.g., pollution, habitat fragmentation), may be encoded by genes that are enriched or fixed in synanthropic populations.
+
+```{r rodent_tree}
+
+rodent_tree <- treeio::read.nexus(here("data", "rodent_phylogeny", "output.nex"))
+
+rodent_tree_1 <- as_tibble(rodent_tree[[1]]) %>%
+  left_join(synanthropy_df %>%
+              select("label" = sciName, Synanthropic)) %>%
+  as.phylo()
+
+tree_viz <- as.phylo(rodent_tree_1) %>%
+  ggtree(layout = "circular") +
+  geom_treescale() +
+  geom_tiplab(aes(label = Synanthropic, colour = Synanthropic), size = 1)
+
+```
+
+## Analysis
