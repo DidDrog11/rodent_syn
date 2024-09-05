@@ -9,6 +9,7 @@ author:
   - Steph Seifert
 date: today
 code-fold: true
+self-contained: true
 ---
 
 ```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
@@ -104,18 +105,156 @@ Synanthropic and nonsynanthropic species that share a recent common ancestor may
 
 ```{r rodent_tree}
 
-rodent_tree <- treeio::read.nexus(here("data", "rodent_phylogeny", "output.nex"))
-
-rodent_tree_1 <- as_tibble(rodent_tree[[1]]) %>%
-  left_join(synanthropy_df %>%
-              select("label" = sciName, Synanthropic)) %>%
-  as.phylo()
-
-tree_viz <- as.phylo(rodent_tree_1) %>%
-  ggtree(layout = "circular") +
-  geom_treescale() +
-  geom_tiplab(aes(label = Synanthropic, colour = Synanthropic), size = 1)
+# rodent_tree <- treeio::read.nexus(here("data", "rodent_phylogeny", "output.nex"))
+# 
+# rodent_tree_1 <- as_tibble(rodent_tree[[1]]) %>%
+#   left_join(synanthropy_df %>%
+#               select("label" = sciName, Synanthropic)) %>%
+#   as.phylo()
+# 
+# tree_viz <- as.phylo(rodent_tree_1) %>%
+#   ggtree(layout = "circular") +
+#   geom_treescale() +
+#   geom_tiplab(aes(label = Synanthropic, colour = Synanthropic), size = 1)
 
 ```
+
+### Rodent hosts of zoonoses
+
+```{r}
+#| label: rodent-clover
+
+if(!file.exists(here("data", "clover", "clover.rds"))) {
+  dir.create(here("data", "clover"))
+  bacteria <- read_csv(gzcon(url("https://github.com/viralemergence/clover/raw/main/clover/clover_1.0_allpathogens/CLOVER_1.0_Bacteria_AssociationsFlatFile.csv")), show_col_types = FALSE)
+  other <-  read_csv(gzcon(url("https://github.com/viralemergence/clover/raw/main/clover/clover_1.0_allpathogens/CLOVER_1.0_HelminthProtozoaFungi_AssociationsFlatFile.csv")), show_col_types = FALSE)
+  viruses <- read_csv(gzcon(url("https://github.com/viralemergence/clover/raw/main/clover/clover_1.0_allpathogens/CLOVER_1.0_Viruses_AssociationsFlatFile.csv")), show_col_types = FALSE)
+  
+  clover <- list(bacteria = bacteria,
+                 other = other,
+                 viruses = viruses) %>%
+    bind_rows()
+  
+  all_h_p <- clover %>%
+    filter(HostClass == "mammalia") %>%
+    filter(PathogenNCBIResolved == TRUE) %>%
+    select(HostOrder, HostGenus, Host, PathogenType, Pathogen, ReleaseYear, PublicationYear) %>%
+    mutate(year = pmin(ReleaseYear, PublicationYear, na.rm = TRUE)) %>%
+    select(HostOrder, HostGenus, Host, PathogenType, Pathogen, year) %>%
+    group_by(HostGenus, Host, PathogenType, Pathogen, year) %>%
+    distinct() %>%
+    group_by(HostOrder, HostGenus, Host, PathogenType, Pathogen) %>%
+    arrange(year) %>%
+    slice(1)
+  
+  rodentia_clover <- all_h_p %>%
+    filter(HostOrder == "rodentia")
+  
+  clover_data <- list(rodentia_clover = rodentia_clover)
+  
+  write_rds(clover_data, here("data", "clover", "clover.rds"))
+  
+} else {
+  
+  clover_data <- read_rds(here("data", "clover", "clover.rds"))
+  
+}
+
+
+```
+
+### Rodent traits
+
+```{r}
+#| label: rodent-combine
+#| message: false
+#| warning: false
+
+rodent_trait <- read_csv(here("data", "combine", "trait_data_imputed.csv")) %>%
+  mutate(iucn2020_binomial = str_to_lower(iucn2020_binomial)) %>%
+  filter(order == "Rodentia")
+
+
+# Are rodent hosts different from non-hosts in their life span or reproductive output?
+rodent_hosts <- clover_data$rodentia_clover %>%
+  group_by(Host, PathogenType)  %>%
+  summarise(n = n(), .groups = "drop") %>%
+  pivot_wider(names_from = PathogenType, values_from = n) %>%
+  mutate(across(.cols = everything(), .fns = ~ replace_na(.x, 0))) %>%
+  mutate(Host = case_when(str_detect(Host, "alexandromys middendorffii") ~ "microtus middendorffii",
+                          str_detect(Host, "bolomys amoenus") ~ "necromys amoenus",
+                          str_detect(Host, "dipodillus campestris") ~ "gerbillus campestris",
+                          str_detect(Host, "dipodillus dasyurus") ~ "gerbillus dasyurus",
+                          str_detect(Host, "eothenomys eleusis") ~ "thomasomys eleusis",
+                          str_detect(Host, "liomys adspersus") ~ "heteromys adspersus",
+                          str_detect(Host, "liomys salvini") ~ "heteromys salvini",
+                          str_detect(Host, "myotomys unisulcatus") ~ "otomys unisulcatus",
+                          str_detect(Host, "neodon fuscus") ~ "lasiopodomys fuscus",
+                          str_detect(Host, "orientallactaga sibirica") ~ "allactaga sibirica",
+                          str_detect(Host, "rattus flavipectus") ~ "rattus tanezumi",
+                          str_detect(Host, "^tamias") ~ str_replace(Host, "^tamias", "neotamias"),
+                          str_detect(Host, "terricola subterraneus") ~ "microtus subterraneus",
+                          TRUE ~ Host),
+         Host = case_when(str_detect(Host, "neotamias striatus") ~ "tamias striatus",
+                          str_detect(Host, "neotamiasciurus douglasii") ~ "tamiasciurus douglasii",
+                          str_detect(Host, "neotamiasciurus hudsonicus") ~ "tamiasciurus hudsonicus",
+                          TRUE ~ Host)) %>%
+  rowwise() %>%
+  mutate(n_pathogens = sum(virus, `bacteria/rickettsia`, protozoa, helminth, fungi))
+
+present_hosts <- rodent_hosts$Host[rodent_hosts$Host %in% rodent_trait$iucn2020_binomial]
+missing_hosts <- rodent_hosts$Host[!rodent_hosts$Host %in% rodent_trait$iucn2020_binomial]
+
+trait_by_host <- left_join(rodent_trait,
+          rodent_hosts,
+          by = c("iucn2020_binomial" = "Host")) %>%
+  select(iucn2020_binomial, adult_mass_g, max_longevity_d, gestation_length_d, litter_size_n, litters_per_year_n, n_pathogens, virus, `bacteria/rickettsia`, protozoa, helminth, fungi) %>%
+  mutate(pathogen_status = case_when(is.na(n_pathogens) ~ FALSE,
+                                     TRUE ~ TRUE))
+
+ggplot(data = trait_by_host) +
+  geom_histogram(aes(x = adult_mass_g)) +
+  facet_wrap(~ pathogen_status, scales = "free_y") +
+  scale_x_log10() +
+  labs(y = "N species",
+       x = "log10(adult mass g)",
+       title = "Adult mass by zoonosis host status") +
+  theme_bw()
+
+ggplot(data = trait_by_host) +
+  geom_histogram(aes(x = max_longevity_d)) +
+  facet_wrap(~ pathogen_status, scales = "free_y") +
+  scale_x_log10() +
+  labs(y = "N species",
+       x = "log10(max longevity d)",
+       title = "Longevity by zoonosis host status") +
+  theme_bw()
+
+ggplot(data = trait_by_host) +
+  geom_histogram(aes(x = gestation_length_d)) +
+  facet_wrap(~ pathogen_status, scales = "free_y") +
+  scale_x_log10() +
+  labs(y = "N species",
+       x = "log10(gestation length d)",
+       title = "Gestation length by zoonosis host status") +
+  theme_bw()
+
+ggplot(data = trait_by_host) +
+  geom_histogram(aes(x = litter_size_n)) +
+  facet_wrap(~ pathogen_status, scales = "free_y") +
+  labs(y = "N species",
+       x = "Litter size",
+       title = "Litter size by zoonosis host status") +
+  theme_bw()
+
+ggplot(data = trait_by_host) +
+  geom_histogram(aes(x = litters_per_year_n)) +
+  facet_wrap(~ pathogen_status, scales = "free_y") +
+  labs(y = "N species",
+       x = "Litters per year",
+       title = "Litters per year by zoonosis host status") +
+  theme_bw()
+```
+
 
 ## Analysis
