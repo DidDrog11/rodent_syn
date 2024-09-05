@@ -206,54 +206,70 @@ present_hosts <- rodent_hosts$Host[rodent_hosts$Host %in% rodent_trait$iucn2020_
 missing_hosts <- rodent_hosts$Host[!rodent_hosts$Host %in% rodent_trait$iucn2020_binomial]
 
 trait_by_host <- left_join(rodent_trait,
-          rodent_hosts,
+          rodent_hosts %>%
+            filter(virus >= 1),
           by = c("iucn2020_binomial" = "Host")) %>%
   select(iucn2020_binomial, adult_mass_g, max_longevity_d, gestation_length_d, litter_size_n, litters_per_year_n, n_pathogens, virus, `bacteria/rickettsia`, protozoa, helminth, fungi) %>%
   mutate(pathogen_status = case_when(is.na(n_pathogens) ~ FALSE,
                                      TRUE ~ TRUE))
 
-ggplot(data = trait_by_host) +
-  geom_histogram(aes(x = adult_mass_g)) +
-  facet_wrap(~ pathogen_status, scales = "free_y") +
-  scale_x_log10() +
-  labs(y = "N species",
-       x = "log10(adult mass g)",
-       title = "Adult mass by zoonosis host status") +
-  theme_bw()
+# Function to perform Wilcoxon test and calculate quartiles
+get_stats <- function(data, variable) {
+  # Perform Wilcoxon test
+  formula <- as.formula(paste(variable, "~ pathogen_status"))
+  test_result <- wilcox.test(formula, data = data, exact = FALSE)
+  p_value <- test_result$p.value
+  
+  # Calculate quartiles and add significance annotation
+  quartiles <- data %>%
+    group_by(pathogen_status) %>%
+    summarise(
+      median_value = median(.data[[variable]], na.rm = TRUE),
+      lower_quartile = quantile(.data[[variable]], 0.25, na.rm = TRUE),
+      upper_quartile = quantile(.data[[variable]], 0.75, na.rm = TRUE)
+    ) %>%
+    mutate(significant = ifelse(p_value < 0.05, "*", ""),
+           p_value = round(p_value, 5))
+  
+  list(quartiles = quartiles, p_value = p_value)
+}
 
-ggplot(data = trait_by_host) +
-  geom_histogram(aes(x = max_longevity_d)) +
-  facet_wrap(~ pathogen_status, scales = "free_y") +
-  scale_x_log10() +
-  labs(y = "N species",
-       x = "log10(max longevity d)",
-       title = "Longevity by zoonosis host status") +
-  theme_bw()
+# List of variables to analyze
+variables <- c("adult_mass_g", "max_longevity_d", "gestation_length_d", 
+               "litter_size_n", "litters_per_year_n")
+# Variables that require log transformation on the x-axis
+log_transform_vars <- c("adult_mass_g", "max_longevity_d", "gestation_length_d")
 
-ggplot(data = trait_by_host) +
-  geom_histogram(aes(x = gestation_length_d)) +
-  facet_wrap(~ pathogen_status, scales = "free_y") +
-  scale_x_log10() +
-  labs(y = "N species",
-       x = "log10(gestation length d)",
-       title = "Gestation length by zoonosis host status") +
-  theme_bw()
-
-ggplot(data = trait_by_host) +
-  geom_histogram(aes(x = litter_size_n)) +
-  facet_wrap(~ pathogen_status, scales = "free_y") +
-  labs(y = "N species",
-       x = "Litter size",
-       title = "Litter size by zoonosis host status") +
-  theme_bw()
-
-ggplot(data = trait_by_host) +
-  geom_histogram(aes(x = litters_per_year_n)) +
-  facet_wrap(~ pathogen_status, scales = "free_y") +
-  labs(y = "N species",
-       x = "Litters per year",
-       title = "Litters per year by zoonosis host status") +
-  theme_bw()
+# Loop through each variable and create plots
+for (variable in variables) {
+  # Get statistics for the current variable
+  stats <- get_stats(trait_by_host, variable)
+  print(stats)
+  
+  # Generate the plot
+  p <- ggplot(data = trait_by_host) +
+    geom_histogram(aes_string(x = variable), bins = 30) +
+    geom_vline(data = stats$quartiles, aes(xintercept = median_value), colour = "red", linetype = "dashed") +
+    geom_rect(data = stats$quartiles, aes(xmin = lower_quartile,
+                                          xmax = upper_quartile,
+                                          ymin = -Inf,
+                                          ymax = Inf), fill = "blue", alpha = 0.2) +
+    geom_text(data = stats$quartiles, aes(x = median_value,
+                                          y = -0.1,
+                                          label = significant),
+              vjust = -20, # Position the star above the median line
+              colour = "black",
+              size = 5) +
+    facet_wrap(~ pathogen_status, scales = "free_y") +
+    {if (variable %in% log_transform_vars) scale_x_log10() else NULL} +
+    labs(y = "N species",
+         x = paste("log10(", variable, ")", sep = ""),
+         title = paste(variable, "by zoonosis host status"),
+         caption = paste("* refers to statistical significance, may not represent a biologically meaningful difference")) +
+    theme_bw()
+  
+  print(p)  # Display the plot
+}
 ```
 
 
