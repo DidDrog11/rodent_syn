@@ -263,7 +263,8 @@ for (variable in variables) {
     facet_wrap(~ pathogen_status, scales = "free_y") +
     {if (variable %in% log_transform_vars) scale_x_log10() else NULL} +
     labs(y = "N species",
-         x = paste("log10(", variable, ")", sep = ""),
+         x = paste(if (variable %in% log_transform_vars) "log10(" else "", variable, if (variable %in% log_transform_vars) ")" 
+                   else "", sep = ""),
          title = paste(variable, "by zoonosis host status"),
          caption = paste("* refers to statistical significance, may not represent a biologically meaningful difference")) +
     theme_bw()
